@@ -12,7 +12,6 @@ import HistoryChart from '../components/HistoryChart';
 import UpcomingBills from '../components/UpcomingBills';
 import ExportPDF from '../components/ExportPDF';
 import WhatsAppShare from '../components/WhatsAppShare';
-import BackupExport from '../components/BackupExport';
 import AppBackground from '../components/AppBackground';
 
 import { SkeletonDashboard } from '../components/Skeleton';
@@ -46,7 +45,8 @@ export default function Home() {
     balance: 0, 
     salary: 0, 
     byCategory: [], 
-    history: [] 
+    history: [],
+    projection: []
   });
   const [filter, setFilter] = useState({ 
     month: new Date().getMonth() + 1, 
@@ -176,7 +176,7 @@ export default function Home() {
       case 'charts':
         return <Charts summary={summary} />;
       case 'history':
-        return <HistoryChart history={summary.history} />;
+        return <HistoryChart history={summary.history} projection={summary.projection} />;
       default:
         return null;
     }
@@ -189,7 +189,7 @@ export default function Home() {
     limits: 'Gastos por Categoria (Limites Mensais)',
     bills: 'Contas a Pagar e Compromissos Fixos',
     charts: 'Gráficos de Despesas por Categoria e Balanço',
-    history: 'Evolução Histórica das Contas'
+    history: 'Quadro Financeiro — ABOA'
   };
 
   return (
@@ -323,8 +323,6 @@ export default function Home() {
               userName={activeName}
               transactions={transactions}
             />
-
-            <BackupExport onRestore={load} />
 
             <UpcomingBills />
 

@@ -1,6 +1,6 @@
 import mongoose from 'mongoose';
 
-// User (operadores da ONG)
+// User (diretoria da ONG)
 const userSchema = new mongoose.Schema({
   name:             { type: String, required: true, trim: true },
   email:            { type: String, required: true, unique: true, lowercase: true, trim: true },
@@ -15,7 +15,7 @@ const userSchema = new mongoose.Schema({
 });
 export const User = mongoose.models.User || mongoose.model('User', userSchema);
 
-// Transaction adaptada para Prestação de Contas Compartilhada da ABOA
+// Transaction adaptada para Prestação de Contas da ABOA
 const transactionSchema = new mongoose.Schema({
   userId: { type: mongoose.Schema.Types.ObjectId, ref: 'User', required: true },
   
@@ -43,9 +43,17 @@ const transactionSchema = new mongoose.Schema({
   materialItem:     { type: String, default: '', trim: true },
   materialQuantity: { type: Number, default: 0 },
 
-  receiptUrl: { type: String, default: null },
+  receiptUrl:     { type: String, default: null },
+  receiptExpired: { type: Boolean, default: false },
 
-  // Rastreabilidade de Equipe / Auditoria
+  // Vínculo e controle de pagamento de Contas a Pagar / Parcelamentos
+  billId:            { type: mongoose.Schema.Types.ObjectId, ref: 'Bill', default: null },
+  installmentNumber: { type: Number, default: null },
+  totalInstallments: { type: Number, default: null },
+  paymentStatus:     { type: String, enum: ['paid', 'partial', 'pending'], default: 'paid' },
+  paidAmount:        { type: Number, default: null },
+
+  // Rastreabilidade / Auditoria
   createdByName: { type: String, default: '', trim: true },
   updatedByName: { type: String, default: '', trim: true },
   editedFields:  { type: [String], default: [] },
@@ -55,7 +63,7 @@ const transactionSchema = new mongoose.Schema({
 });
 export const Transaction = mongoose.models.Transaction || mongoose.model('Transaction', transactionSchema);
 
-// Bill (contas a pagar compartilhadas da ONG)
+// Bill (contas a pagar e compromissos fixos da ONG)
 const billSchema = new mongoose.Schema({
   userId:            { type: mongoose.Schema.Types.ObjectId, ref: 'User', required: true },
   name:              { type: String, required: true, trim: true },
@@ -65,15 +73,9 @@ const billSchema = new mongoose.Schema({
   startDate:         { type: String, required: true },
   category:          { type: String, default: 'Outros', trim: true },
   paidInstallments:  { type: Number, default: 0 },
+  totalPaidAmount:   { type: Number, default: 0 },
   createdByName:     { type: String, default: '', trim: true },
   createdAt:         { type: Date, default: Date.now },
-});
-
-billSchema.pre('save', function(next) {
-  if (!this.installmentAmount && this.totalAmount && this.installments) {
-    this.installmentAmount = this.totalAmount / this.installments;
-  }
-  next();
 });
 
 export const Bill = mongoose.models.Bill || mongoose.model('Bill', billSchema);

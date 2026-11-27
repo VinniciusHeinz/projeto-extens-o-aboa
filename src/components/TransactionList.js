@@ -119,6 +119,23 @@ export default function TransactionList({ transactions, onDelete }) {
   const fmt = (v) =>
     `R$ ${Math.abs(Number(v) || 0).toLocaleString('pt-BR', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`;
 
+  // Valor efetivamente pago (parcelas pendentes ainda não saíram do caixa)
+  const getExecutedValue = (t) => {
+    if (t.type !== 'expense') return Number(t.amount) || 0;
+    const status = t.paymentStatus || 'paid';
+    if (status === 'pending') return 0;
+    if (status === 'partial') return Number(t.paidAmount) || 0;
+    return Number(t.amount) || 0;
+  };
+
+  const getPendingValue = (t) => {
+    if (t.type !== 'expense') return 0;
+    const status = t.paymentStatus || 'paid';
+    if (status === 'pending') return Number(t.amount) || 0;
+    if (status === 'partial') return Math.max(0, (Number(t.amount) || 0) - (Number(t.paidAmount) || 0));
+    return 0;
+  };
+
   const bySource = transactions.filter((t) => {
     if (sourceFilter === 'ALL') return true;
     return (t.fundingSource || '').includes(sourceFilter);
@@ -126,7 +143,7 @@ export default function TransactionList({ transactions, onDelete }) {
 
   const totalIncome = bySource.filter((t) => t.type === 'income').reduce((acc, t) => acc + (Number(t.amount) || 0), 0);
   const totalMaterial = bySource.filter((t) => t.type === 'material_donation').reduce((acc, t) => acc + (Number(t.amount) || 0), 0);
-  const totalExpense = bySource.filter((t) => t.type === 'expense').reduce((acc, t) => acc + (Number(t.amount) || 0), 0);
+  const totalExpense = bySource.filter((t) => t.type === 'expense').reduce((acc, t) => acc + getExecutedValue(t), 0);
 
   const filtered = bySource.filter((t) => {
     if (tab === 'all') return true;
@@ -134,9 +151,11 @@ export default function TransactionList({ transactions, onDelete }) {
   });
 
   const totalDisplayed = filtered.reduce((acc, t) => {
-    const val = Number(t.amount) || 0;
+    const val = getExecutedValue(t);
     return t.type === 'expense' ? acc - val : acc + val;
   }, 0);
+
+  const pendingDisplayed = filtered.reduce((acc, t) => acc + getPendingValue(t), 0);
 
   const openDetails = (tx) => {
     syncCategories();
@@ -261,6 +280,30 @@ export default function TransactionList({ transactions, onDelete }) {
     return previouslyEdited || String(editForm[fieldName] || '') !== String(selectedTx[fieldName] || '');
   };
 
+  const renderPaymentBadge = (t) => {
+    if (!t.billId && (!t.paymentStatus || t.paymentStatus === 'paid')) return null;
+    const status = t.paymentStatus || 'paid';
+    if (status === 'paid') {
+      return (
+        <span style={{ fontSize: 10, background: 'rgba(34, 197, 94, 0.16)', color: '#22c55e', border: '1px solid rgba(34, 197, 94, 0.45)', padding: '1px 6px', borderRadius: 4, fontWeight: 700 }}>
+          ✓ Quitado
+        </span>
+      );
+    }
+    if (status === 'partial') {
+      return (
+        <span style={{ fontSize: 10, background: 'rgba(245, 158, 11, 0.16)', color: '#fbbf24', border: '1px solid rgba(245, 158, 11, 0.45)', padding: '1px 6px', borderRadius: 4, fontWeight: 700 }}>
+          ⏳ Parcialmente Paga
+        </span>
+      );
+    }
+    return (
+      <span style={{ fontSize: 10, background: 'rgba(148, 163, 184, 0.14)', color: '#94a3b8', border: '1px solid #334155', padding: '1px 6px', borderRadius: 4, fontWeight: 600 }}>
+        🕒 A Pagar (Pendente)
+      </span>
+    );
+  };
+
   const inputStyle = {
     background: '#0f172a',
     border: '1px solid #38bdf8',
@@ -288,7 +331,7 @@ export default function TransactionList({ transactions, onDelete }) {
         <div>
           <h2 style={{ fontSize: 16, fontWeight: 700, color: '#f8fafc', margin: 0, display: 'flex', alignItems: 'center' }}>
             Livro Caixa & Prestação de Contas — ABOA
-            <InfoBadge text="Histórico oficial de movimentações. Registra automaticamente qual operador cadastrou ou editou cada item." />
+            <InfoBadge text="Histórico oficial de movimentações. Parcelas pendentes de Contas a Pagar aparecem sinalizadas e só entram no cálculo de saída conforme forem pagas." />
           </h2>
           <p style={{ fontSize: 12, color: '#94a3b8', marginTop: 2 }}>
             Controle compartilhado de entradas, doações de materiais e despesas
@@ -369,9 +412,9 @@ export default function TransactionList({ transactions, onDelete }) {
                 <th style={{ padding: '10px 8px' }}>Descrição / Detalhes</th>
                 <th style={{ padding: '10px 8px' }}>Doador / Fornecedor</th>
                 <th style={{ padding: '10px 8px' }}>Recurso / Emenda</th>
-                <th style={{ padding: '10px 8px' }}>Operador</th>
+                <th style={{ padding: '10px 8px' }}>Responsável</th>
                 <th style={{ padding: '10px 8px' }}>Anexo</th>
-                <th style={{ padding: '10px 8px', textAlign: 'right' }}>Valor Total</th>
+                <th style={{ padding: '10px 8px', textAlign: 'right' }}>Valor</th>
                 <th style={{ padding: '10px 8px', textAlign: 'right' }}>Ações</th>
               </tr>
             </thead>
@@ -380,24 +423,44 @@ export default function TransactionList({ transactions, onDelete }) {
                 const id = t.id || t._id;
                 const isInc = t.type === 'income';
                 const isMat = t.type === 'material_donation';
-                const color = isInc ? '#22c55e' : isMat ? '#38bdf8' : '#ef4444';
+                const status = t.paymentStatus || 'paid';
+                const isPending = status === 'pending';
+                const isPartial = status === 'partial';
+                const paidVal = isPartial ? Number(t.paidAmount) || 0 : Number(t.amount) || 0;
+                const remVal = isPartial ? Math.max(0, (Number(t.amount) || 0) - paidVal) : 0;
+
+                const color = isInc
+                  ? '#22c55e'
+                  : isMat
+                  ? '#38bdf8'
+                  : isPending
+                  ? '#94a3b8'
+                  : isPartial
+                  ? '#fbbf24'
+                  : '#ef4444';
                 const hasEdits = Array.isArray(t.editedFields) && t.editedFields.length > 0;
 
                 return (
-                  <tr key={id} style={{ borderBottom: '1px solid #0f172a' }}>
+                  <tr key={id} style={{ borderBottom: '1px solid #0f172a', opacity: isPending ? 0.78 : 1 }}>
                     <td style={{ padding: '12px 8px', color: '#94a3b8', whiteSpace: 'nowrap' }}>
                       {t.date}
                     </td>
 
                     <td style={{ padding: '12px 8px' }}>
-                      <div style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
+                      <div style={{ display: 'flex', alignItems: 'center', gap: 6, flexWrap: 'wrap' }}>
                         <span style={{ fontWeight: 700, color: '#f8fafc' }}>{t.description}</span>
+                        {renderPaymentBadge(t)}
                         {hasEdits && (
                           <span title="Este registro possui campos editados" style={{ fontSize: 12, color: '#f59e0b', cursor: 'help' }}>
                             ✏️
                           </span>
                         )}
                       </div>
+                      {isPartial && (
+                        <p style={{ fontSize: 11, color: '#fbbf24', margin: '3px 0' }}>
+                          Pago: {fmt(paidVal)} • Resta: {fmt(remVal)} (Parcela: {fmt(t.amount)})
+                        </p>
+                      )}
                       {isMat && t.materialItem && (
                         <p style={{ fontSize: 11, color: '#38bdf8', margin: '2px 0' }}>
                           📦 {t.materialQuantity}x {t.materialItem}
@@ -444,13 +507,8 @@ export default function TransactionList({ transactions, onDelete }) {
                         borderRadius: 6,
                         border: '1px solid #334155'
                       }}>
-                        👤 {t.createdByName || 'Operador'}
+                        👤 {t.createdByName || 'Diretoria ABOA'}
                       </span>
-                      {t.updatedByName && hasEdits && (
-                        <div style={{ fontSize: 10, color: '#f59e0b', marginTop: 3 }}>
-                          ✏️ Ed.: {t.updatedByName}
-                        </div>
-                      )}
                     </td>
 
                     <td style={{ padding: '12px 8px' }}>
@@ -462,8 +520,22 @@ export default function TransactionList({ transactions, onDelete }) {
                     </td>
 
                     <td style={{ padding: '12px 8px', textAlign: 'right', fontWeight: 700, color, whiteSpace: 'nowrap' }}>
-                      {isInc ? '+ ' : isMat ? '📦 ' : '- '}
-                      {fmt(t.amount)}
+                      {isPending ? (
+                        <div>
+                          <div>{fmt(t.amount)}</div>
+                          <div style={{ fontSize: 10, color: '#64748b', fontWeight: 500 }}>a pagar</div>
+                        </div>
+                      ) : isPartial ? (
+                        <div>
+                          <div>- {fmt(paidVal)}</div>
+                          <div style={{ fontSize: 10, color: '#fbbf24', fontWeight: 500 }}>de {fmt(t.amount)}</div>
+                        </div>
+                      ) : (
+                        <>
+                          {isInc ? '+ ' : isMat ? '📦 ' : '- '}
+                          {fmt(t.amount)}
+                        </>
+                      )}
                     </td>
 
                     <td style={{ padding: '12px 8px', textAlign: 'right', whiteSpace: 'nowrap' }}>
@@ -510,10 +582,15 @@ export default function TransactionList({ transactions, onDelete }) {
         </div>
       )}
 
-      {/* Rodapé da Tabela com Cálculo Líquido */}
-      <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginTop: 16, paddingTop: 12, borderTop: '1px solid #334155', fontSize: 13 }}>
+      {/* Rodapé da Tabela com Cálculo Líquido Realizado */}
+      <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginTop: 16, paddingTop: 12, borderTop: '1px solid #334155', fontSize: 13, flexWrap: 'wrap', gap: 8 }}>
         <span style={{ color: '#94a3b8' }}>
-          {tab === 'all' ? 'Saldo líquido exibido' : 'Total exibido'} ({filtered.length} registro{filtered.length !== 1 ? 's' : ''})
+          {tab === 'all' ? 'Saldo líquido realizado' : 'Total realizado exibido'} ({filtered.length} registro{filtered.length !== 1 ? 's' : ''})
+          {pendingDisplayed > 0 && (
+            <span style={{ color: '#fbbf24', marginLeft: 8, fontSize: 12 }}>
+              • {fmt(pendingDisplayed)} a pagar pendente
+            </span>
+          )}
         </span>
         <span style={{
           fontWeight: 700,
@@ -524,7 +601,7 @@ export default function TransactionList({ transactions, onDelete }) {
         </span>
       </div>
 
-      {/* Modal de Mais Detalhes + Visualização de NF + Edição Auditada */}
+      {/* Modal de Mais Detalhes */}
       {selectedTx && (
         <div
           style={{
@@ -565,18 +642,14 @@ export default function TransactionList({ transactions, onDelete }) {
                   color: selectedTx.type === 'income' ? '#22c55e' : selectedTx.type === 'material_donation' ? '#38bdf8' : '#ef4444',
                   border: '1px solid currentColor'
                 }}>
-                  {selectedTx.type === 'income' ? '↓ Entrada Financeira (Tipo Fixo)' : selectedTx.type === 'material_donation' ? '📦 Doação de Produtos (Tipo Fixo)' : '↑ Saída / Despesa (Tipo Fixo)'}
+                  {selectedTx.type === 'income' ? '↓ Entrada Financeira' : selectedTx.type === 'material_donation' ? '📦 Doação de Produtos' : '↑ Saída / Despesa'}
                 </span>
+
+                {renderPaymentBadge(selectedTx)}
 
                 <span style={{ fontSize: 12, color: '#cbd5e1', background: '#0f172a', padding: '4px 10px', borderRadius: 6, border: '1px solid #334155' }}>
-                  👤 Lançado por: <strong>{selectedTx.createdByName || 'Operador'}</strong>
+                  👤 Responsável: <strong>{selectedTx.createdByName || 'Diretoria ABOA'}</strong>
                 </span>
-
-                {(selectedTx.editedFields?.length > 0) && (
-                  <span style={{ fontSize: 11, color: '#f59e0b' }}>
-                    ✏️ Editado {selectedTx.updatedByName ? `por ${selectedTx.updatedByName}` : ''}
-                  </span>
-                )}
               </div>
 
               <div style={{ display: 'flex', gap: 8 }}>
@@ -606,13 +679,18 @@ export default function TransactionList({ transactions, onDelete }) {
               </div>
             </div>
 
+            {/* Resumo de Pagamento Parcial no Modal */}
+            {selectedTx.paymentStatus === 'partial' && (
+              <div style={{ background: 'rgba(245, 158, 11, 0.1)', border: '1px solid #f59e0b', borderRadius: 8, padding: '10px 14px', marginBottom: 16, fontSize: 12, color: '#fde68a' }}>
+                ⏳ <strong>Situação da Parcela:</strong> Valor total da parcela: <strong>{fmt(selectedTx.amount)}</strong> • Valor já pago: <strong>{fmt(selectedTx.paidAmount)}</strong> • Restante a pagar: <strong>{fmt(Math.max(0, (selectedTx.amount || 0) - (selectedTx.paidAmount || 0)))}</strong>.
+              </div>
+            )}
+
             {/* Grade de Campos Detalhados */}
             <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(220px, 1fr))', gap: 14, marginBottom: 20 }}>
-              {/* 1. Descrição */}
               <div>
                 <label style={{ fontSize: 11, color: '#cbd5e1', fontWeight: 600, display: 'flex', alignItems: 'center', marginBottom: 5 }}>
                   Descrição *
-                  <InfoBadge text="Resumo da movimentação registrado no livro caixa. Exemplo: Conta de água, Compra de alimentos." />
                   <EditedPencil isEdited={isFieldEdited('description')} />
                 </label>
                 {isEditing ? (
@@ -626,11 +704,9 @@ export default function TransactionList({ transactions, onDelete }) {
                 )}
               </div>
 
-              {/* 2. Categoria */}
               <div>
                 <label style={{ fontSize: 11, color: '#cbd5e1', fontWeight: 600, display: 'flex', alignItems: 'center', marginBottom: 5 }}>
                   Categoria *
-                  <InfoBadge text="Exibe exatamente as mesmas categorias do formulário de registro, incluindo qualquer nova categoria que você adicionar." />
                   <EditedPencil isEdited={isFieldEdited('category')} />
                 </label>
                 {isEditing ? (
@@ -650,11 +726,9 @@ export default function TransactionList({ transactions, onDelete }) {
                 )}
               </div>
 
-              {/* 3. Data */}
               <div>
                 <label style={{ fontSize: 11, color: '#cbd5e1', fontWeight: 600, display: 'flex', alignItems: 'center', marginBottom: 5 }}>
                   Data da Operação *
-                  <InfoBadge text="Data em que o pagamento, recebimento ou doação ocorreu efetivamente." />
                   <EditedPencil isEdited={isFieldEdited('date')} />
                 </label>
                 {isEditing ? (
@@ -669,11 +743,9 @@ export default function TransactionList({ transactions, onDelete }) {
                 )}
               </div>
 
-              {/* 4. Valor */}
               <div>
                 <label style={{ fontSize: 11, color: '#cbd5e1', fontWeight: 600, display: 'flex', alignItems: 'center', marginBottom: 5 }}>
                   Valor (R$) *
-                  <InfoBadge text="Valor monetário total da operação formatado em Reais (R$)." />
                   <EditedPencil isEdited={isFieldEdited('amount')} />
                 </label>
                 {isEditing ? (
@@ -691,11 +763,9 @@ export default function TransactionList({ transactions, onDelete }) {
                 )}
               </div>
 
-              {/* 5. Origem do Recurso */}
               <div>
                 <label style={{ fontSize: 11, color: '#cbd5e1', fontWeight: 600, display: 'flex', alignItems: 'center', marginBottom: 5 }}>
                   Origem do Recurso *
-                  <InfoBadge text="Selecione a fonte do recurso utilizado. 'Emenda Governamental' exige o número do processo administrativo." />
                   <EditedPencil isEdited={isFieldEdited('fundingSource')} />
                 </label>
                 {isEditing ? (
@@ -713,12 +783,10 @@ export default function TransactionList({ transactions, onDelete }) {
                 )}
               </div>
 
-              {/* 6. Nº da Emenda */}
               {(isEditing ? editForm.fundingSource.includes('Emenda') || editForm.amendmentCode : selectedTx.fundingSource?.includes('Emenda') || selectedTx.amendmentCode) && (
                 <div>
                   <label style={{ fontSize: 11, color: '#f59e0b', fontWeight: 600, display: 'flex', alignItems: 'center', marginBottom: 5 }}>
                     Nº da Emenda / Processo *
-                    <InfoBadge text="Número oficial da emenda parlamentar, termo de fomento ou processo administrativo." />
                     <EditedPencil isEdited={isFieldEdited('amendmentCode')} />
                   </label>
                   {isEditing ? (
@@ -735,11 +803,9 @@ export default function TransactionList({ transactions, onDelete }) {
                 </div>
               )}
 
-              {/* 7. Doador / Fornecedor */}
               <div>
                 <label style={{ fontSize: 11, color: '#cbd5e1', fontWeight: 600, display: 'flex', alignItems: 'center', marginBottom: 5 }}>
                   {selectedTx.type === 'expense' ? 'Fornecedor' : 'Doador / Parceiro'}
-                  <InfoBadge text="Nome ou Razão Social da pessoa física, empresa ou órgão público vinculado ao lançamento." />
                   <EditedPencil isEdited={isFieldEdited('entityName')} />
                 </label>
                 {isEditing ? (
@@ -756,11 +822,9 @@ export default function TransactionList({ transactions, onDelete }) {
                 )}
               </div>
 
-              {/* 8. CPF / CNPJ */}
               <div>
                 <label style={{ fontSize: 11, color: '#cbd5e1', fontWeight: 600, display: 'flex', alignItems: 'center', marginBottom: 5 }}>
                   CPF / CNPJ
-                  <InfoBadge text="Documento fiscal do fornecedor ou doador. Digite apenas números; a pontuação é automática." />
                   <EditedPencil isEdited={isFieldEdited('entityDoc')} />
                 </label>
                 {isEditing ? (
@@ -778,13 +842,11 @@ export default function TransactionList({ transactions, onDelete }) {
                 )}
               </div>
 
-              {/* 9. Campos de Doação de Produtos */}
               {selectedTx.type === 'material_donation' && (
                 <>
                   <div>
                     <label style={{ fontSize: 11, color: '#38bdf8', fontWeight: 600, display: 'flex', alignItems: 'center', marginBottom: 5 }}>
                       Item Doado *
-                      <InfoBadge text="Descrição do material ou produto recebido em doação." />
                       <EditedPencil isEdited={isFieldEdited('materialItem')} />
                     </label>
                     {isEditing ? (
@@ -800,7 +862,6 @@ export default function TransactionList({ transactions, onDelete }) {
                   <div>
                     <label style={{ fontSize: 11, color: '#38bdf8', fontWeight: 600, display: 'flex', alignItems: 'center', marginBottom: 5 }}>
                       Quantidade *
-                      <InfoBadge text="Quantidade total de itens recebidos na doação." />
                       <EditedPencil isEdited={isFieldEdited('materialQuantity')} />
                     </label>
                     {isEditing ? (
@@ -824,7 +885,6 @@ export default function TransactionList({ transactions, onDelete }) {
               <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 12, flexWrap: 'wrap', gap: 10 }}>
                 <label style={{ fontSize: 13, fontWeight: 700, color: '#e2e8f0', display: 'flex', alignItems: 'center' }}>
                   📎 Documento Comprobatório / Nota Fiscal
-                  <InfoBadge text="Visualização do recibo ou Nota Fiscal anexada. No modo de edição, você pode substituir ou anexar um novo arquivo PDF ou imagem." />
                   <EditedPencil isEdited={isFieldEdited('receiptUrl')} />
                 </label>
 
@@ -865,7 +925,6 @@ export default function TransactionList({ transactions, onDelete }) {
               <p style={{ color: '#ef4444', fontSize: 13, marginTop: 12, fontWeight: 600 }}>{errorMsg}</p>
             )}
 
-            {/* Botão Salvar Edição */}
             {isEditing && (
               <button
                 type="button"
@@ -884,7 +943,7 @@ export default function TransactionList({ transactions, onDelete }) {
                   cursor: 'pointer'
                 }}
               >
-                {saving ? 'Salvando alterações...' : '✓ Salvar Alterações (Marcar Campos Editados com ✏️)'}
+                {saving ? 'Salvando alterações...' : '✓ Salvar Alterações'}
               </button>
             )}
           </div>

@@ -4,25 +4,56 @@ export default function ExportPDF({ transactions = [], summary = {}, month, year
   const months = ['Janeiro','Fevereiro','Março','Abril','Maio','Junho','Julho','Agosto','Setembro','Outubro','Novembro','Dezembro'];
   const fmt = v => `R$ ${(Number(v) || 0).toLocaleString('pt-BR', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`;
 
+  const getExecutedExpense = (t) => {
+    if (t.type !== 'expense') return 0;
+    const status = t.paymentStatus || 'paid';
+    if (status === 'pending') return 0;
+    if (status === 'partial') return Number(t.paidAmount) || 0;
+    return Number(t.amount) || 0;
+  };
+
+  const getPaymentStatusLabel = (t) => {
+    if (t.type !== 'expense') return '';
+    const status = t.paymentStatus || 'paid';
+    if (status === 'pending') {
+      return `<span class="badge-pending">🕒 A Pagar (Pendente — Total: ${fmt(t.amount)})</span>`;
+    }
+    if (status === 'partial') {
+      const paid = Number(t.paidAmount) || 0;
+      const rem = Math.max(0, (Number(t.amount) || 0) - paid);
+      return `<span class="badge-partial">⏳ Parcialmente Pago (Pago: ${fmt(paid)} | Resta: ${fmt(rem)} | Total: ${fmt(t.amount)})</span>`;
+    }
+    if (t.billId) {
+      return `<span class="badge-paid">✓ Quitado</span>`;
+    }
+    return '';
+  };
+
   const incomes   = (transactions || []).filter(t => t.type === 'income');
   const materials = (transactions || []).filter(t => t.type === 'material_donation');
   const expenses  = (transactions || []).filter(t => t.type === 'expense');
 
   const totalIncomes   = incomes.reduce((s, t) => s + (Number(t.amount) || 0), 0);
   const totalMaterials = materials.reduce((s, t) => s + (Number(t.amount) || 0), 0);
-  const totalExpenses  = expenses.reduce((s, t) => s + (Number(t.amount) || 0), 0);
+  const totalExpenses  = expenses.reduce((s, t) => s + getExecutedExpense(t), 0);
   const emendaExpenses = expenses
     .filter(t => (t.fundingSource || '').includes('Emenda Governamental'))
-    .reduce((s, t) => s + (Number(t.amount) || 0), 0);
+    .reduce((s, t) => s + getExecutedExpense(t), 0);
 
   const balance = totalIncomes - totalExpenses;
 
-  const buildRows = (items, isMaterial = false) => items.map(t => {
+  const buildRows = (items, isMaterial = false, isExpense = false) => items.map(t => {
     const isEmenda = (t.fundingSource || '').includes('Emenda Governamental');
     const entity = t.entityName ? `${t.entityName} ${t.entityDoc ? `(${t.entityDoc})` : ''}` : '—';
+    const statusBadge = isExpense ? getPaymentStatusLabel(t) : '';
     const details = isMaterial 
       ? `<strong>${t.materialQuantity}x ${t.materialItem}</strong><br/><span style="color:#64748b;font-size:11px">${t.description}</span>`
-      : t.description;
+      : `<div>${t.description}</div>${statusBadge ? `<div style="margin-top:3px">${statusBadge}</div>` : ''}`;
+
+    const displayAmt = isExpense ? getExecutedExpense(t) : (Number(t.amount) || 0);
+    const amtText = isExpense && t.paymentStatus === 'pending'
+      ? `<span style="color:#64748b;font-weight:600">${fmt(t.amount)}<br/><small>(Não pago)</small></span>`
+      : fmt(displayAmt);
 
     return `
       <tr>
@@ -33,15 +64,15 @@ export default function ExportPDF({ transactions = [], summary = {}, month, year
         <td style="font-size:11px">
           ${isEmenda ? `<span class="badge-emenda">Emenda: ${t.amendmentCode || 'Sim'}</span>` : (t.fundingSource || 'Próprio')}
         </td>
-        <td style="text-align:right;font-weight:700">${fmt(t.amount)}</td>
+        <td style="text-align:right;font-weight:700">${amtText}</td>
       </tr>
     `;
   }).join('');
 
-  const buildSection = (title, color, items, isMaterial = false) => {
-    const total = items.reduce((s, t) => s + (Number(t.amount) || 0), 0);
+  const buildSection = (title, color, items, isMaterial = false, isExpense = false) => {
+    const total = items.reduce((s, t) => s + (isExpense ? getExecutedExpense(t) : (Number(t.amount) || 0)), 0);
     const rows = items.length > 0
-      ? buildRows(items, isMaterial)
+      ? buildRows(items, isMaterial, isExpense)
       : `<tr><td colspan="6" style="text-align:center;color:#94a3b8;font-style:italic;padding:16px">Nenhum lançamento registrado neste período</td></tr>`;
 
     return `
@@ -55,18 +86,18 @@ export default function ExportPDF({ transactions = [], summary = {}, month, year
           <thead>
             <tr>
               <th style="width:75px">Data</th>
-              <th>Descrição / Itens</th>
+              <th>Descrição / Situação</th>
               <th>Categoria</th>
               <th>Doador / Fornecedor</th>
               <th>Origem Recurso</th>
-              <th style="text-align:right;width:110px">Valor Total</th>
+              <th style="text-align:right;width:115px">Valor Pago</th>
             </tr>
           </thead>
           <tbody>${rows}</tbody>
           ${items.length > 0 ? `
             <tfoot>
               <tr>
-                <td colspan="5" style="text-align:right;font-weight:700;color:#475569">Total da Seção</td>
+                <td colspan="5" style="text-align:right;font-weight:700;color:#475569">Total Efetivado da Seção</td>
                 <td style="text-align:right;font-weight:800;color:${color}">${fmt(total)}</td>
               </tr>
             </tfoot>` : ''}
@@ -75,16 +106,18 @@ export default function ExportPDF({ transactions = [], summary = {}, month, year
     `;
   };
 
-  // Seção 4: Detalhes individuais de cada lançamento + Imagem do comprovante anexado
   const buildDetailedReceipts = () => {
     if (!transactions || transactions.length === 0) return '';
 
     const cardsHtml = transactions.map((t, idx) => {
       const isInc = t.type === 'income';
       const isMat = t.type === 'material_donation';
+      const isExp = t.type === 'expense';
       const badgeText = isInc ? 'ENTRADA FINANCEIRA' : isMat ? 'DOAÇÃO DE PRODUTOS' : 'SAÍDA / DESPESA';
       const badgeColor = isInc ? '#16a34a' : isMat ? '#0284c7' : '#dc2626';
       const hasEdits = Array.isArray(t.editedFields) && t.editedFields.length > 0;
+      const statusBadge = isExp ? getPaymentStatusLabel(t) : '';
+      const paidVal = isExp ? getExecutedExpense(t) : (Number(t.amount) || 0);
 
       let attachmentHtml = `<div class="no-receipt">Nenhum comprovante ou Nota Fiscal anexado a este lançamento.</div>`;
       if (t.receiptExpired) {
@@ -118,9 +151,12 @@ export default function ExportPDF({ transactions = [], summary = {}, month, year
             <div>
               <span class="detail-num">Lançamento #${idx + 1}</span>
               <span class="detail-badge" style="color:${badgeColor};border-color:${badgeColor}">${badgeText}</span>
+              ${statusBadge}
               ${hasEdits ? `<span class="detail-edited">✏️ Registro editado após lançamento</span>` : ''}
             </div>
-            <div class="detail-amount" style="color:${badgeColor}">${fmt(t.amount)}</div>
+            <div class="detail-amount" style="color:${badgeColor}">
+              ${isExp && t.paymentStatus === 'pending' ? `${fmt(t.amount)} (A Pagar)` : fmt(paidVal)}
+            </div>
           </div>
 
           <div class="detail-grid">
@@ -132,6 +168,7 @@ export default function ExportPDF({ transactions = [], summary = {}, month, year
             <div><strong>${isInc || isMat ? 'Doador / Parceiro' : 'Fornecedor'}:</strong> ${t.entityName || 'Não informado'}</div>
             <div><strong>CPF / CNPJ:</strong> ${t.entityDoc || 'Não informado'}</div>
             ${isMat ? `<div><strong>Item / Quantidade:</strong> ${t.materialQuantity}x ${t.materialItem}</div>` : ''}
+            ${isExp && t.paymentStatus === 'partial' ? `<div><strong>Detalhe da Parcela:</strong> Pago ${fmt(t.paidAmount)} de ${fmt(t.amount)} (Restam ${fmt(Math.max(0, (t.amount || 0) - (t.paidAmount || 0)))})</div>` : ''}
           </div>
 
           ${attachmentHtml}
@@ -193,10 +230,12 @@ export default function ExportPDF({ transactions = [], summary = {}, month, year
   tfoot td{background:#f8fafc;border-top:1px solid #cbd5e1;padding:8px}
 
   .badge-emenda{background:#fef3c7;color:#92400e;padding:2px 4px;border-radius:3px;font-weight:600;font-size:10px;border:1px solid #fde68a}
+  .badge-paid{background:#dcfce7;color:#166534;padding:1px 5px;border-radius:3px;font-weight:700;font-size:9px;border:1px solid #86efac;display:inline-block;margin-left:4px}
+  .badge-partial{background:#fef3c7;color:#92400e;padding:1px 5px;border-radius:3px;font-weight:700;font-size:9px;border:1px solid #fcd34d;display:inline-block;margin-left:4px}
+  .badge-pending{background:#f1f5f9;color:#475569;padding:1px 5px;border-radius:3px;font-weight:600;font-size:9px;border:1px solid #cbd5e1;display:inline-block;margin-left:4px}
 
-  /* Estilos dos Cards de Detalhamento e Comprovantes */
   .detail-card{border:1px solid #cbd5e1;border-radius:8px;padding:14px;margin-bottom:16px;background:#fff;page-break-inside:avoid}
-  .detail-top{display:flex;justify-content:space-between;align-items:center;border-bottom:1px solid #e2e8f0;padding-bottom:8px;margin-bottom:10px}
+  .detail-top{display:flex;justify-content:space-between;align-items:center;border-bottom:1px solid #e2e8f0;padding-bottom:8px;margin-bottom:10px;flex-wrap:wrap;gap:6px}
   .detail-num{font-weight:800;font-size:12px;color:#0f172a;margin-right:8px}
   .detail-badge{font-size:9px;font-weight:700;padding:2px 6px;border:1px solid;border-radius:4px}
   .detail-edited{font-size:10px;color:#b45309;background:#fef3c7;padding:2px 6px;border-radius:4px;margin-left:6px;font-weight:600}
@@ -248,7 +287,7 @@ export default function ExportPDF({ transactions = [], summary = {}, month, year
       <div class="sub">${materials.length} lote(s) estimado(s)</div>
     </div>
     <div class="card">
-      <div class="lbl">Despesas Totais</div>
+      <div class="lbl">Despesas Pagas</div>
       <div class="val" style="color:#dc2626">${fmt(totalExpenses)}</div>
       <div class="sub">${expenses.length} lançamento(s)</div>
     </div>
@@ -268,7 +307,7 @@ export default function ExportPDF({ transactions = [], summary = {}, month, year
 
   ${buildSection('1. Entradas Financeiras e Repasses', '#16a34a', incomes)}
   ${buildSection('2. Doações de Produtos e Insumos Físicos', '#0284c7', materials, true)}
-  ${buildSection('3. Saídas, Pagamentos e Despesas Executadas', '#dc2626', expenses)}
+  ${buildSection('3. Saídas, Pagamentos e Despesas Executadas', '#dc2626', expenses, false, true)}
   ${buildDetailedReceipts()}
 
   <div class="signatures">

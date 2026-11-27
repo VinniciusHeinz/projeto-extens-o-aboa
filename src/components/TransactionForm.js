@@ -77,7 +77,8 @@ function formatCpfCnpj(value) {
   if (digits.length <= 11) {
     return digits
       .replace(/(\d{3})(\d)/, '$1.$2')
-      .replace(/(\d{3})(\d)/, '$1.$2') .replace(/(\d{3})(\d{1,2})$/, '$1-$2');
+      .replace(/(\d{3})(\d)/, '$1.$2')
+      .replace(/(\d{3})(\d{1,2})$/, '$1-$2');
   }
   return digits
     .replace(/^(\d{2})(\d)/, '$1.$2')
@@ -112,21 +113,37 @@ export default function TransactionForm({ onAdd }) {
   const [uploading, setUploading] = useState(false);
   const [error, setError] = useState('');
 
-  // Sincroniza categorias salvas no localStorage
   const syncCategories = useCallback(() => {
     try {
       const savedExp = localStorage.getItem(STORAGE_KEYS.expense);
       const savedInc = localStorage.getItem(STORAGE_KEYS.income);
       const savedMat = localStorage.getItem(STORAGE_KEYS.material_donation);
 
-      if (savedExp) setExpenseCats(JSON.parse(savedExp));
-      else localStorage.setItem(STORAGE_KEYS.expense, JSON.stringify(DEFAULT_EXPENSE_CATS));
+      const nextExp = savedExp ? JSON.parse(savedExp) : DEFAULT_EXPENSE_CATS;
+      const nextInc = savedInc ? JSON.parse(savedInc) : DEFAULT_INCOME_CATS;
+      const nextMat = savedMat ? JSON.parse(savedMat) : DEFAULT_MATERIAL_CATS;
 
-      if (savedInc) setIncomeCats(JSON.parse(savedInc));
-      else localStorage.setItem(STORAGE_KEYS.income, JSON.stringify(DEFAULT_INCOME_CATS));
+      if (!savedExp) localStorage.setItem(STORAGE_KEYS.expense, JSON.stringify(DEFAULT_EXPENSE_CATS));
+      if (!savedInc) localStorage.setItem(STORAGE_KEYS.income, JSON.stringify(DEFAULT_INCOME_CATS));
+      if (!savedMat) localStorage.setItem(STORAGE_KEYS.material_donation, JSON.stringify(DEFAULT_MATERIAL_CATS));
 
-      if (savedMat) setMaterialCats(JSON.parse(savedMat));
-      else localStorage.setItem(STORAGE_KEYS.material_donation, JSON.stringify(DEFAULT_MATERIAL_CATS));
+      setExpenseCats(nextExp);
+      setIncomeCats(nextInc);
+      setMaterialCats(nextMat);
+
+      setForm(prev => {
+        const activeList =
+          prev.type === 'income'
+            ? nextInc
+            : prev.type === 'material_donation'
+            ? nextMat
+            : nextExp;
+
+        if (activeList.length > 0 && !activeList.includes(prev.category)) {
+          return { ...prev, category: activeList[0] };
+        }
+        return prev;
+      });
     } catch (e) {
       console.error('Erro ao sincronizar categorias:', e);
     }
@@ -135,7 +152,11 @@ export default function TransactionForm({ onAdd }) {
   useEffect(() => {
     syncCategories();
     window.addEventListener('aboa-categories-updated', syncCategories);
-    return () => window.removeEventListener('aboa-categories-updated', syncCategories);
+    window.addEventListener('storage', syncCategories);
+    return () => {
+      window.removeEventListener('aboa-categories-updated', syncCategories);
+      window.removeEventListener('storage', syncCategories);
+    };
   }, [syncCategories]);
 
   const handleAmountChange = (e) => {
@@ -194,6 +215,41 @@ export default function TransactionForm({ onAdd }) {
     setIsAddingCategory(false);
   };
 
+  const handleDeleteCurrentCategory = () => {
+    const target = form.category;
+    if (!target) return;
+
+    const currentList =
+      form.type === 'income'
+        ? incomeCats
+        : form.type === 'material_donation'
+        ? materialCats
+        : expenseCats;
+
+    if (currentList.length <= 1) {
+      alert('É necessário manter pelo menos uma categoria cadastrada.');
+      return;
+    }
+
+    if (!confirm(`Deseja excluir a categoria "${target}" de todos os campos do sistema?`)) return;
+
+    const updated = currentList.filter(c => c !== target);
+    const storageKey =
+      form.type === 'income'
+        ? STORAGE_KEYS.income
+        : form.type === 'material_donation'
+        ? STORAGE_KEYS.material_donation
+        : STORAGE_KEYS.expense;
+
+    if (form.type === 'income') setIncomeCats(updated);
+    else if (form.type === 'material_donation') setMaterialCats(updated);
+    else setExpenseCats(updated);
+
+    localStorage.setItem(storageKey, JSON.stringify(updated));
+    window.dispatchEvent(new Event('aboa-categories-updated'));
+    setForm(prev => ({ ...prev, category: updated[0] }));
+  };
+
   const handleFileUpload = (e) => {
     const file = e.target.files[0];
     if (!file) return;
@@ -250,14 +306,27 @@ export default function TransactionForm({ onAdd }) {
   const categories = isIncome ? incomeCats : isMaterial ? materialCats : expenseCats;
   const typeColor = isIncome ? '#22c55e' : isMaterial ? '#3b82f6' : '#ef4444';
 
+  const labelStyle = {
+    fontFamily: 'inherit',
+    fontSize: 12,
+    fontWeight: 600,
+    color: '#cbd5e1',
+    display: 'flex',
+    alignItems: 'center'
+  };
+
   const inputStyle = {
+    fontFamily: 'inherit',
+    fontSize: 13,
+    fontWeight: 400,
+    lineHeight: '1.4',
     background: '#0f172a',
     border: '1px solid #334155',
     borderRadius: 8,
     padding: '10px 12px',
-    color: '#fff',
-    fontSize: 13,
-    width: '100%'
+    color: '#f8fafc',
+    width: '100%',
+    boxSizing: 'border-box'
   };
 
   return (
@@ -275,6 +344,7 @@ export default function TransactionForm({ onAdd }) {
           type="button"
           onClick={() => setType('expense')}
           style={{
+            fontFamily: 'inherit',
             flex: 1, padding: '11px', border: 'none', cursor: 'pointer', fontWeight: 600, fontSize: 13,
             background: form.type === 'expense' ? '#ef4444' : '#0f172a',
             color: form.type === 'expense' ? '#fff' : '#94a3b8'
@@ -286,6 +356,7 @@ export default function TransactionForm({ onAdd }) {
           type="button"
           onClick={() => setType('income')}
           style={{
+            fontFamily: 'inherit',
             flex: 1, padding: '11px', border: 'none', cursor: 'pointer', fontWeight: 600, fontSize: 13,
             background: form.type === 'income' ? '#22c55e' : '#0f172a',
             color: form.type === 'income' ? '#fff' : '#94a3b8'
@@ -297,6 +368,7 @@ export default function TransactionForm({ onAdd }) {
           type="button"
           onClick={() => setType('material_donation')}
           style={{
+            fontFamily: 'inherit',
             flex: 1, padding: '11px', border: 'none', cursor: 'pointer', fontWeight: 600, fontSize: 13,
             background: form.type === 'material_donation' ? '#3b82f6' : '#0f172a',
             color: form.type === 'material_donation' ? '#fff' : '#94a3b8'
@@ -310,7 +382,7 @@ export default function TransactionForm({ onAdd }) {
         
         {/* 1. Descrição */}
         <div style={{ display: 'flex', flexDirection: 'column', gap: 6 }}>
-          <label style={{ fontSize: 12, fontWeight: 600, color: '#cbd5e1', display: 'flex', alignItems: 'center' }}>
+          <label style={labelStyle}>
             Descrição *
             <InfoBadge text="Resumo da movimentação para o livro caixa. Exemplo: Compra de cestas básicas, Pagamento de energia elétrica ou Doação recebida." />
           </label>
@@ -325,17 +397,27 @@ export default function TransactionForm({ onAdd }) {
 
         {/* 2. Categoria */}
         <div style={{ display: 'flex', flexDirection: 'column', gap: 6 }}>
-          <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
-            <label style={{ fontSize: 12, fontWeight: 600, color: '#cbd5e1', display: 'flex', alignItems: 'center' }}>
+          <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', gap: 6 }}>
+            <label style={labelStyle}>
               Categoria *
-              <InfoBadge text="Classificação contábil da movimentação. Exemplo: Alimentação, Materiais de Consumo ou Serviços de Terceiros." />
+              <InfoBadge text="Classificação contábil da movimentação. Categorias criadas ou excluídas aqui sincronizam com Gastos por Categoria e Contas a Pagar." />
             </label>
             <button
               type="button"
               onClick={() => setIsAddingCategory(!isAddingCategory)}
-              style={{ background: 'transparent', border: 'none', color: '#38bdf8', fontSize: 11, cursor: 'pointer', padding: 0 }}
+              style={{
+                fontFamily: 'inherit',
+                background: isAddingCategory ? '#334155' : 'rgba(56, 189, 248, 0.14)',
+                border: `1px solid ${isAddingCategory ? '#475569' : 'rgba(56, 189, 248, 0.5)'}`,
+                color: isAddingCategory ? '#e2e8f0' : '#38bdf8',
+                borderRadius: 6,
+                padding: '3px 9px',
+                fontSize: 11,
+                fontWeight: 700,
+                cursor: 'pointer'
+              }}
             >
-              {isAddingCategory ? 'Cancelar' : '+ Nova'}
+              {isAddingCategory ? 'Cancelar' : '+ Nova Categoria'}
             </button>
           </div>
 
@@ -344,27 +426,48 @@ export default function TransactionForm({ onAdd }) {
               <input
                 value={newCatName}
                 onChange={e => setNewCatName(e.target.value)}
-                placeholder="Nome da categoria"
-                style={{ ...inputStyle, borderColor: '#38bdf8', padding: '8px 10px' }}
+                placeholder="Nome da nova categoria"
+                style={{ ...inputStyle, borderColor: '#38bdf8', flex: 1 }}
               />
               <button
                 type="button"
                 onClick={handleCreateCategory}
-                style={{ background: '#38bdf8', color: '#0f172a', border: 'none', borderRadius: 8, padding: '0 12px', fontWeight: 700, fontSize: 12, cursor: 'pointer' }}
+                style={{ fontFamily: 'inherit', background: '#38bdf8', color: '#0f172a', border: 'none', borderRadius: 8, padding: '0 14px', fontWeight: 700, fontSize: 12, cursor: 'pointer' }}
               >
-                OK
+                Salvar
               </button>
             </div>
           ) : (
-            <select name="category" value={form.category} onChange={handle} style={inputStyle}>
-              {categories.map(c => <option key={c} value={c}>{c}</option>)}
-            </select>
+            <div style={{ display: 'flex', gap: 6, alignItems: 'center' }}>
+              <select name="category" value={form.category} onChange={handle} style={{ ...inputStyle, flex: 1 }}>
+                {categories.map(c => <option key={c} value={c}>{c}</option>)}
+              </select>
+              {categories.length > 1 && (
+                <button
+                  type="button"
+                  onClick={handleDeleteCurrentCategory}
+                  title="Excluir categoria selecionada"
+                  style={{
+                    background: '#2d0a0a',
+                    border: '1px solid #991b1b',
+                    color: '#ef4444',
+                    borderRadius: 8,
+                    padding: '10px 11px',
+                    cursor: 'pointer',
+                    fontSize: 12,
+                    flexShrink: 0
+                  }}
+                >
+                  🗑️
+                </button>
+              )}
+            </div>
           )}
         </div>
 
         {/* 3. Data */}
         <div style={{ display: 'flex', flexDirection: 'column', gap: 6 }}>
-          <label style={{ fontSize: 12, fontWeight: 600, color: '#cbd5e1', display: 'flex', alignItems: 'center' }}>
+          <label style={labelStyle}>
             Data *
             <InfoBadge text="Data efetiva em que o pagamento, recebimento ou entrega de produtos foi realizado." />
           </label>
@@ -380,7 +483,7 @@ export default function TransactionForm({ onAdd }) {
 
         {/* 4. Origem do Recurso */}
         <div style={{ display: 'flex', flexDirection: 'column', gap: 6 }}>
-          <label style={{ fontSize: 12, fontWeight: 600, color: '#cbd5e1', display: 'flex', alignItems: 'center' }}>
+          <label style={labelStyle}>
             Origem do Recurso *
             <InfoBadge text="Indica qual fundo custeou a operação. Selecione 'Emenda Governamental' quando envolver verba pública sujeita a prestação de contas." />
           </label>
@@ -394,8 +497,8 @@ export default function TransactionForm({ onAdd }) {
         {/* 5. Código da Emenda (Condicional) */}
         {form.fundingSource.includes('Emenda Governamental') && (
           <div style={{ display: 'flex', flexDirection: 'column', gap: 6 }}>
-            <label style={{ fontSize: 12, fontWeight: 600, color: '#f59e0b', display: 'flex', alignItems: 'center' }}>
-              Nº da Emenda / Processo *
+            <label style={{ ...labelStyle, color: '#f59e0b' }}>
+              Nº da Emenda *
               <InfoBadge text="Identificador oficial do termo de fomento ou processo administrativo. Exemplo: Processo nº 2026/0042." />
             </label>
             <input
@@ -410,7 +513,7 @@ export default function TransactionForm({ onAdd }) {
 
         {/* 6. Fornecedor ou Doador */}
         <div style={{ display: 'flex', flexDirection: 'column', gap: 6 }}>
-          <label style={{ fontSize: 12, fontWeight: 600, color: '#cbd5e1', display: 'flex', alignItems: 'center' }}>
+          <label style={labelStyle}>
             {isIncome || isMaterial ? 'Doador' : 'Fornecedor'}
           </label>
           <input
@@ -424,8 +527,8 @@ export default function TransactionForm({ onAdd }) {
 
         {/* 7. CPF ou CNPJ com Máscara */}
         <div style={{ display: 'flex', flexDirection: 'column', gap: 6 }}>
-          <label style={{ fontSize: 12, fontWeight: 600, color: '#cbd5e1', display: 'flex', alignItems: 'center' }}>
-            CPF / CNPJ
+          <label style={labelStyle}>
+            CPF ou CNPJ
           </label>
           <input
             name="entityDoc"
@@ -441,7 +544,7 @@ export default function TransactionForm({ onAdd }) {
         {isMaterial && (
           <>
             <div style={{ display: 'flex', flexDirection: 'column', gap: 6 }}>
-              <label style={{ fontSize: 12, fontWeight: 600, color: '#38bdf8', display: 'flex', alignItems: 'center' }}>
+              <label style={{ ...labelStyle, color: '#38bdf8' }}>
                 Item Doado *
                 <InfoBadge text="Especifique o produto recebido pela ONG. Exemplo: Pacote de Arroz 5kg, Cobertor de Casal, Fralda Infantil." />
               </label>
@@ -454,7 +557,7 @@ export default function TransactionForm({ onAdd }) {
               />
             </div>
             <div style={{ display: 'flex', flexDirection: 'column', gap: 6 }}>
-              <label style={{ fontSize: 12, fontWeight: 600, color: '#38bdf8', display: 'flex', alignItems: 'center' }}>
+              <label style={{ ...labelStyle, color: '#38bdf8' }}>
                 Quantidade *
                 <InfoBadge text="Total de unidades, pacotes ou quilos recebidos deste item. Exemplo: 50." />
               </label>
@@ -473,7 +576,7 @@ export default function TransactionForm({ onAdd }) {
 
         {/* 9. Valor em Reais */}
         <div style={{ display: 'flex', flexDirection: 'column', gap: 6 }}>
-          <label style={{ fontSize: 12, fontWeight: 600, color: '#cbd5e1', display: 'flex', alignItems: 'center' }}>
+          <label style={labelStyle}>
             {isMaterial ? 'Valor Estimado (R$) *' : 'Valor (R$) *'}
             <InfoBadge text={isMaterial ? "Valor financeiro estimado dos produtos recebidos para contabilização no balanço." : "Valor total pago ou recebido na operação."} />
           </label>
@@ -485,21 +588,21 @@ export default function TransactionForm({ onAdd }) {
             value={form.amountFormatted}
             onChange={handleAmountChange}
             required
-            style={{ ...inputStyle, borderColor: typeColor, fontWeight: 600 }}
+            style={{ ...inputStyle, borderColor: typeColor, fontWeight: form.amountFormatted ? 600 : 400 }}
           />
         </div>
 
         {/* 10. Anexo */}
         <div style={{ display: 'flex', flexDirection: 'column', gap: 6 }}>
-          <label style={{ fontSize: 12, fontWeight: 600, color: '#cbd5e1', display: 'flex', alignItems: 'center' }}>
-            {isIncome || isMaterial ? 'Comprovante / Recibo' : 'Nota Fiscal / Recibo'}
+          <label style={labelStyle}>
+            {isIncome || isMaterial ? 'Comprovante ou Recibo' : 'Nota Fiscal ou Recibo'}
             <InfoBadge text="Anexe a digitalização (PDF ou imagem de até 3MB) da Nota Fiscal, cupom ou recibo assinado para auditoria." />
           </label>
           <input
             type="file"
             accept="image/*,application/pdf"
             onChange={handleFileUpload}
-            style={{ fontSize: 12, color: '#94a3b8', padding: '7px 0' }}
+            style={{ fontFamily: 'inherit', fontSize: 12, color: '#94a3b8', padding: '8px 0' }}
           />
           {uploading && <span style={{ fontSize: 11, color: '#38bdf8' }}>Anexando arquivo...</span>}
           {form.receiptUrl && <span style={{ fontSize: 11, color: '#22c55e', fontWeight: 600 }}>✓ Documento anexado</span>}
@@ -510,6 +613,7 @@ export default function TransactionForm({ onAdd }) {
           type="submit"
           className="btn"
           style={{
+            fontFamily: 'inherit',
             background: typeColor,
             color: '#fff',
             fontWeight: 700,

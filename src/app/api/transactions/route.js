@@ -1,6 +1,6 @@
 import { NextResponse } from 'next/server';
 import { connectDB } from '@/lib/mongodb';
-import { Transaction, User } from '@/lib/models';
+import { Transaction, User, Bill } from '@/lib/models';
 import { verifyToken } from '@/lib/authMiddleware';
 
 const MAX_AMOUNT = 50_000_000;
@@ -27,13 +27,17 @@ async function enforceDataRetention() {
     const sixMonthsStr = sixMonthsAgo.toISOString().split('T')[0];
     const fourYearsStr = fourYearsAgo.toISOString().split('T')[0];
 
+    const activeBills = await Bill.find({}, '_id').lean();
+    const validBillIds = activeBills.map(b => b._id);
+
     await Promise.all([
       // 1. Remove anexos com mais de 6 meses para otimizar o armazenamento
       Transaction.updateMany(
         {
-          receiptUrl: { $ne: null, $ne: '' },$or: [
+          receiptUrl: { $ne: null, $ne: '' },
+          $or: [
             { createdAt: { $lt: sixMonthsAgo } },
-            { createdAt: { $exists: false }, date: {$lt: sixMonthsStr } }
+            { createdAt: { $exists: false }, date: { $lt: sixMonthsStr } }
           ]
         },
         { $set: { receiptUrl: null, receiptExpired: true } }
@@ -42,7 +46,14 @@ async function enforceDataRetention() {
       Transaction.deleteMany({
         $or: [
           { createdAt: { $lt: fourYearsAgo } },
-          { createdAt: { $exists: false }, date: {$lt: fourYearsStr } }
+          { createdAt: { $exists: false }, date: { $lt: fourYearsStr } }
+        ]
+      }),
+      // 3. Remove parcelas órfãs de contas já excluídas
+      Transaction.deleteMany({
+        $or: [
+          { billId: { $ne: null, $nin: validBillIds } },
+          { billId: null, description: { $regex: /\(\d+\/\d+\)$/ } }
         ]
       })
     ]);

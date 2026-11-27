@@ -57,6 +57,7 @@ export default function BudgetLimits({ summary }) {
 
       const savedCats = localStorage.getItem(STORAGE_KEYS.expense);
       if (savedCats) setCategories(JSON.parse(savedCats));
+      else localStorage.setItem(STORAGE_KEYS.expense, JSON.stringify(DEFAULT_EXPENSE_CATS));
     } catch (e) {
       console.error('Erro ao ler limites:', e);
     }
@@ -65,7 +66,11 @@ export default function BudgetLimits({ summary }) {
   useEffect(() => {
     syncData();
     window.addEventListener('aboa-categories-updated', syncData);
-    return () => window.removeEventListener('aboa-categories-updated', syncData);
+    window.addEventListener('storage', syncData);
+    return () => {
+      window.removeEventListener('aboa-categories-updated', syncData);
+      window.removeEventListener('storage', syncData);
+    };
   }, [syncData]);
 
   const handleLimitChange = (category, rawInput) => {
@@ -92,7 +97,12 @@ export default function BudgetLimits({ summary }) {
 
   const handleAddCategory = () => {
     const trimmed = newCategoryName.trim();
-    if (!trimmed || categories.includes(trimmed)) return;
+    if (!trimmed) return;
+    if (categories.includes(trimmed)) {
+      setNewCategoryName('');
+      setIsAddingNew(false);
+      return;
+    }
     const updated = [...categories, trimmed];
     setCategories(updated);
     localStorage.setItem(STORAGE_KEYS.expense, JSON.stringify(updated));
@@ -102,13 +112,24 @@ export default function BudgetLimits({ summary }) {
   };
 
   const handleDeleteCategory = (catToDelete) => {
+    if (categories.length <= 1) {
+      alert('É necessário manter pelo menos uma categoria cadastrada.');
+      return;
+    }
     const updated = categories.filter(c => c !== catToDelete);
     setCategories(updated);
     localStorage.setItem(STORAGE_KEYS.expense, JSON.stringify(updated));
-    window.dispatchEvent(new Event('aboa-categories-updated'));
+
+    const updatedLimits = { ...limits };
+    delete updatedLimits[catToDelete];
+    setLimits(updatedLimits);
+    localStorage.setItem(STORAGE_LIMITS_KEY, JSON.stringify(updatedLimits));
+
     const updatedDraft = { ...draft };
     delete updatedDraft[catToDelete];
     setDraft(updatedDraft);
+
+    window.dispatchEvent(new Event('aboa-categories-updated'));
   };
 
   const byCategory = {};
@@ -119,20 +140,40 @@ export default function BudgetLimits({ summary }) {
   const hasLimits = Object.keys(limits).length > 0;
   const alerts = categories.filter(c => limits[c] && (byCategory[c] || 0) > limits[c]);
 
+  const labelStyle = {
+    fontFamily: 'inherit',
+    fontSize: 12,
+    fontWeight: 600,
+    color: '#cbd5e1'
+  };
+
+  const inputStyle = {
+    fontFamily: 'inherit',
+    fontSize: 13,
+    lineHeight: '1.4',
+    background: '#1e293b',
+    border: '1px solid #334155',
+    borderRadius: 8,
+    padding: '10px 12px',
+    color: '#f8fafc',
+    width: '100%',
+    boxSizing: 'border-box'
+  };
+
   return (
-    <div className="card" style={{ marginBottom: 20, background: '#1e293b', border: '1px solid #334155', borderRadius: 12, padding: 20 }}>
+    <div className="card" style={{ marginBottom: 24, background: '#1e293b', border: '1px solid #334155', borderRadius: 12, padding: 20 }}>
       <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 14 }}>
         <div>
-          <p style={{ fontSize: 15, fontWeight: 700, color: '#e2e8f0', margin: 0, display: 'flex', alignItems: 'center' }}>
+          <h2 style={{ fontSize: 16, fontWeight: 700, color: '#f8fafc', margin: 0, display: 'flex', alignItems: 'center' }}>
             🎯 Gastos por Categoria
-            <InfoBadge text="Acompanhe quanto já foi gasto em cada categoria no mês em relação ao limite planejado pela ONG. O sistema emite um alerta caso algum gasto ultrapasse o valor estipulado." />
-          </p>
+            <InfoBadge text="Contabiliza apenas os valores efetivamente pagos no mês selecionado em relação ao limite planejado pela ONG. Parcelas futuras pendentes só entram no limite quando forem pagas." />
+          </h2>
         </div>
         <button 
           type="button"
           className="btn" 
           onClick={() => { setDraft({...limits}); setEditing(!editing); }}
-          style={{ background: editing ? '#334155' : '#0f172a', color: '#94a3b8', border: '1px solid #334155', fontSize: 12, padding: '6px 14px', borderRadius: 8, cursor: 'pointer' }}
+          style={{ fontFamily: 'inherit', background: editing ? '#334155' : '#0f172a', color: editing ? '#f8fafc' : '#cbd5e1', border: '1px solid #334155', fontSize: 12, padding: '7px 14px', borderRadius: 8, cursor: 'pointer', fontWeight: 600 }}
         >
           {editing ? 'Cancelar' : '✏️ Configurar Limites'}
         </button>
@@ -154,50 +195,60 @@ export default function BudgetLimits({ summary }) {
 
       {editing ? (
         <div>
-          <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 12 }}>
+          <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 12, flexWrap: 'wrap', gap: 8 }}>
             <p style={{ fontSize: 12, color: '#94a3b8', margin: 0 }}>
               Digite o limite mensal (R$) para cada categoria:
             </p>
             <button
               type="button"
               onClick={() => setIsAddingNew(!isAddingNew)}
-              style={{ background: 'transparent', border: 'none', color: '#38bdf8', fontSize: 12, cursor: 'pointer', padding: 0 }}
+              style={{
+                fontFamily: 'inherit',
+                background: isAddingNew ? '#334155' : 'rgba(56, 189, 248, 0.14)',
+                border: `1px solid ${isAddingNew ? '#475569' : 'rgba(56, 189, 248, 0.5)'}`,
+                color: isAddingNew ? '#e2e8f0' : '#38bdf8',
+                borderRadius: 6,
+                padding: '5px 12px',
+                fontSize: 12,
+                fontWeight: 700,
+                cursor: 'pointer'
+              }}
             >
-              {isAddingNew ? 'Fechar' : '+ Nova Categoria'}
+              {isAddingNew ? 'Cancelar' : '+ Nova Categoria'}
             </button>
           </div>
 
           {isAddingNew && (
-            <div style={{ display: 'flex', gap: 8, marginBottom: 14, background: '#0f172a', padding: 10, borderRadius: 8, border: '1px solid #38bdf8' }}>
+            <div style={{ display: 'flex', gap: 8, marginBottom: 14, background: '#0f172a', padding: 12, borderRadius: 8, border: '1px solid #38bdf8' }}>
               <input
                 placeholder="Nome da nova categoria"
                 value={newCategoryName}
                 onChange={e => setNewCategoryName(e.target.value)}
-                style={{ flex: 1, background: '#1e293b', border: '1px solid #334155', borderRadius: 6, padding: '8px 10px', color: '#fff', fontSize: 12 }}
+                style={{ ...inputStyle, flex: 1 }}
               />
               <button
                 type="button"
                 onClick={handleAddCategory}
-                style={{ background: '#38bdf8', color: '#0f172a', border: 'none', borderRadius: 6, padding: '0 14px', fontWeight: 700, fontSize: 12, cursor: 'pointer' }}
+                style={{ fontFamily: 'inherit', background: '#38bdf8', color: '#0f172a', border: 'none', borderRadius: 8, padding: '0 16px', fontWeight: 700, fontSize: 13, cursor: 'pointer' }}
               >
                 Adicionar
               </button>
             </div>
           )}
 
-          <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(220px, 1fr))', gap: 12, marginBottom: 16 }}>
+          <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(220px, 1fr))', gap: 14, marginBottom: 16 }}>
             {categories.map(c => {
               const val = draft[c] || 0;
               const formattedVal = val > 0 ? fmt(val) : '';
               return (
-                <div key={c} style={{ background: '#0f172a', padding: 10, borderRadius: 8, border: '1px solid #334155' }}>
-                  <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 6 }}>
-                    <label style={{ fontSize: 11, color: '#cbd5e1', fontWeight: 600 }}>{c}</label>
+                <div key={c} style={{ background: '#0f172a', padding: 12, borderRadius: 10, border: '1px solid #334155' }}>
+                  <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 8, gap: 6 }}>
+                    <label style={labelStyle}>{c}</label>
                     <button
                       type="button"
                       title="Excluir categoria"
                       onClick={() => handleDeleteCategory(c)}
-                      style={{ background: 'transparent', border: 'none', color: '#ef4444', cursor: 'pointer', fontSize: 11, padding: 0 }}
+                      style={{ background: '#2d0a0a', border: '1px solid #991b1b', borderRadius: 6, color: '#ef4444', cursor: 'pointer', fontSize: 11, padding: '3px 6px', flexShrink: 0 }}
                     >
                       🗑️
                     </button>
@@ -208,7 +259,7 @@ export default function BudgetLimits({ summary }) {
                     placeholder="R$ 0,00 (Sem limite)"
                     value={formattedVal}
                     onChange={e => handleLimitChange(c, e.target.value)}
-                    style={{ width: '100%', background: '#1e293b', border: '1px solid #334155', borderRadius: 6, padding: '8px 10px', color: '#fff', fontSize: 13, fontWeight: 600 }}
+                    style={{ ...inputStyle, fontWeight: formattedVal ? 600 : 400 }}
                   />
                 </div>
               );
@@ -219,7 +270,7 @@ export default function BudgetLimits({ summary }) {
             type="button"
             className="btn btn-primary" 
             onClick={save} 
-            style={{ width: '100%', padding: '12px', background: '#38bdf8', color: '#0f172a', fontWeight: 700, borderRadius: 8, border: 'none', cursor: 'pointer' }}
+            style={{ fontFamily: 'inherit', width: '100%', padding: '12px', background: '#38bdf8', color: '#0f172a', fontWeight: 700, borderRadius: 8, border: 'none', cursor: 'pointer', fontSize: 14 }}
           >
             Salvar Limites
           </button>
